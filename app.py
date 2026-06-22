@@ -45,7 +45,7 @@ if uploaded_file:
                 
                 # Send to the Gemini model
                 response = client.models.generate_content(
-                    model='gemini-2.5-pro',
+                    model='gemini-2.5-flash',
                     contents=[
                         types.Part.from_bytes(data=pdf_bytes, mime_type='application/pdf'),
                         prompt
