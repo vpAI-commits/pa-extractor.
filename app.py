@@ -3,75 +3,112 @@ from google import genai
 from google.genai import types
 import json
 
-# --- 1. COMPACT UI CONFIGURATION ---
-st.set_page_config(page_title="PA Nexus", page_icon="⚕️", layout="wide", initial_sidebar_state="expanded")
+# --- 1. APPLE UI CONFIGURATION ---
+st.set_page_config(page_title="PA Nexus", page_icon="", layout="wide", initial_sidebar_state="expanded")
 
 if "extracted_data" not in st.session_state:
     st.session_state.extracted_data = None
 
-# Custom CSS for a High-Density, Professional Clinical Look
+# Custom CSS for Apple's Design Language
 st.markdown("""
     <style>
-    /* Clean, professional background */
-    .stApp { background-color: #f8fafc; font-family: 'Inter', -apple-system, sans-serif; color: #1e293b; }
+    /* Base Apple OS Font and Background */
+    .stApp { 
+        background-color: #F5F5F7; 
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif; 
+        color: #1D1D1F; 
+    }
     #MainMenu {visibility: hidden;} footer {visibility: hidden;} header {visibility: hidden;}
     
-    /* Tighter general spacing */
-    .block-container { padding-top: 2rem; padding-bottom: 2rem; max-width: 1200px; }
-    h1, h2, h3 { margin-bottom: 0.5rem; }
+    /* Typography Overrides */
+    h1, h2, h3, h4 { font-weight: 600; letter-spacing: -0.015em; color: #1D1D1F; }
+    p { color: #86868B; }
     
-    /* Compact Metric Cards */
+    /* Apple Pill Buttons */
+    div.stButton > button:first-child {
+        background-color: #0071E3; /* Apple Blue */
+        color: white;
+        border-radius: 980px; /* Perfect pill shape */
+        border: none;
+        padding: 12px 28px;
+        font-weight: 400;
+        font-size: 17px;
+        transition: all 0.2s ease;
+    }
+    div.stButton > button:first-child:hover {
+        background-color: #0077ED;
+        transform: scale(1.02);
+    }
+    
+    /* Smooth Floating Metric Cards */
     div[data-testid="metric-container"] { 
-        background-color: #ffffff; 
-        border: 1px solid #e2e8f0; 
-        border-radius: 8px; 
-        padding: 12px 16px; 
-        box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+        background-color: #FFFFFF; 
+        border: none;
+        border-radius: 20px; 
+        padding: 24px; 
+        box-shadow: 0 4px 24px rgba(0,0,0,0.04);
+        display: flex;
+        flex-direction: column;
+        justify-content: center;
+        align-items: center;
+        text-align: center;
     }
-    div[data-testid="stMetricLabel"] { color: #64748b; font-size: 0.85rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px; }
-    div[data-testid="stMetricValue"] { color: #0f172a; font-size: 1.5rem; font-weight: 700; line-height: 1.2; }
+    div[data-testid="stMetricLabel"] { 
+        color: #86868B; 
+        font-size: 12px; 
+        font-weight: 600; 
+        text-transform: uppercase; 
+        letter-spacing: 0.08em; 
+        margin-bottom: 8px;
+    }
+    div[data-testid="stMetricValue"] { 
+        color: #1D1D1F; 
+        font-size: 36px; 
+        font-weight: 600; 
+        letter-spacing: -0.02em; 
+    }
     
-    /* Compact Decision Banner */
-    .decision-banner { 
-        border-radius: 8px; 
-        padding: 16px 20px; 
+    /* Massive, Clean Decision Box */
+    .apple-banner { 
+        background-color: #FFFFFF; 
+        border-radius: 24px; 
+        padding: 40px; 
         display: flex; 
+        flex-direction: column; 
         align-items: center; 
-        gap: 15px; 
-        margin-bottom: 20px;
-        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
+        text-align: center; 
+        box-shadow: 0 10px 40px rgba(0,0,0,0.06); 
+        margin-bottom: 30px;
     }
-    .decision-banner h2 { margin: 0; font-size: 1.4rem; font-weight: 700; text-transform: uppercase; }
-    .decision-banner p { margin: 0; font-size: 0.95rem; line-height: 1.4; opacity: 0.9; }
+    .apple-banner.approved { border-top: 6px solid #34C759; } /* Apple OS Green */
+    .apple-banner.denied { border-top: 6px solid #FF3B30; } /* Apple OS Red */
+    .apple-banner.pending { border-top: 6px solid #FF9500; } /* Apple OS Orange */
     
-    .approved { background-color: #ecfdf5; border-left: 6px solid #10b981; color: #065f46; }
-    .denied { background-color: #fef2f2; border-left: 6px solid #ef4444; color: #991b1b; }
-    .pending { background-color: #fffbeb; border-left: 6px solid #f59e0b; color: #92400e; }
-    
-    /* Tighter sidebar elements */
-    .css-1d391kg { padding-top: 2rem; }
+    .banner-title { font-size: 48px; font-weight: 700; letter-spacing: -0.02em; margin: 0; color: #1D1D1F; }
+    .banner-rationale { font-size: 19px; color: #86868B; margin-top: 12px; max-width: 600px; line-height: 1.4; }
     </style>
 """, unsafe_allow_html=True)
 
-# --- 2. SIDEBAR: COMPACT UPLOAD ZONES ---
+# --- 2. SIDEBAR: CLEAN UPLOAD ---
 with st.sidebar:
-    st.markdown('<h2 style="color: #0ea5e9; font-weight: 800; margin-top: 0;">⚕️ PA Nexus</h2>', unsafe_allow_html=True)
-    st.caption("Clinical Adjudication Engine")
-    st.divider()
+    st.markdown('<h2 style="margin-top:0;">PA Nexus</h2>', unsafe_allow_html=True)
+    st.markdown("<p style='font-size:14px; margin-top:-10px;'>Adjudication, engineered for tomorrow.</p>", unsafe_allow_html=True)
+    st.write("")
     
-    st.markdown("**1. Patient Record**")
+    st.markdown("<p style='font-weight:600; color:#1D1D1F; margin-bottom:0;'>Patient Record</p>", unsafe_allow_html=True)
     patient_file = st.file_uploader("Upload Medical PDF", type=["pdf"], label_visibility="collapsed", key="pat")
     
     st.write("")
     
-    st.markdown("**2. PBM Policy**")
+    st.markdown("<p style='font-weight:600; color:#1D1D1F; margin-bottom:0;'>PBM Policy</p>", unsafe_allow_html=True)
     policy_file = st.file_uploader("Upload Policy PDF", type=["pdf"], label_visibility="collapsed", key="pol")
     
-    st.divider()
+    st.write("")
+    st.write("")
     
     if patient_file and policy_file:
-        if st.button("Run Adjudication", type="primary", use_container_width=True):
-            with st.spinner("Analyzing documents..."):
+        if st.button("Run Adjudication", use_container_width=True):
+            with st.spinner("Analyzing securely..."):
                 try:
                     patient_bytes = patient_file.read()
                     policy_bytes = policy_file.read()
@@ -92,7 +129,7 @@ with st.sidebar:
                     
                     Output strictly as JSON:
                     {
-                      "patient_status": "Brief status (e.g. Stable, Routine)",
+                      "patient_status": "Brief status",
                       "primary_diagnosis": "Full condition name",
                       "icd_10_code": "Billing code",
                       "requested_drug": "Medication requested",
@@ -110,53 +147,54 @@ with st.sidebar:
                     
                     st.session_state.extracted_data = json.loads(response.text)
                 except Exception as e:
-                    st.error(f"Execution Error: {e}")
+                    st.error(f"Error: {e}")
 
 # --- 3. MAIN DASHBOARD ---
-st.markdown('<h3 style="color: #334155;">Adjudication Results</h3>', unsafe_allow_html=True)
-
 if st.session_state.extracted_data:
     data = st.session_state.extracted_data
     
-    # COMPACT DECISION BANNER
+    # APPLE-STYLE HERO BANNER
     decision = data.get("decision", "UNKNOWN")
     box_class = "approved" if decision == "APPROVED" else "denied" if decision == "DENIED" else "pending"
-    icon = "✅" if decision == "APPROVED" else "❌" if decision == "DENIED" else "⚠️"
+    
+    # Map the text to something slightly more elegant
+    display_decision = "Authorized." if decision == "APPROVED" else "Declined." if decision == "DENIED" else "Action Required."
     
     st.markdown(f"""
-        <div class="decision-banner {box_class}">
-            <div style="font-size: 2rem;">{icon}</div>
-            <div>
-                <h2>{decision}</h2>
-                <p><strong>Rationale:</strong> {data.get('reasoning', '')}</p>
-            </div>
+        <div class="apple-banner {box_class}">
+            <h1 class="banner-title">{display_decision}</h1>
+            <p class="banner-rationale">{data.get('reasoning', '')}</p>
         </div>
     """, unsafe_allow_html=True)
     
-    # COMPACT METRICS GRID
-    col1, col2, col3, col4 = st.columns(4)
-    with col1: st.metric("ICD-10 Code", data.get("icd_10_code", "N/A"))
-    with col2: st.metric("Requested Rx", data.get("requested_drug", "N/A"))
-    with col3: st.metric("Patient Status", data.get("patient_status", "N/A"))
-    with col4: st.metric("Missing Info", "Yes" if data.get("missing_info", "None").lower() not in ["none", "n/a"] else "No")
+    # CENTERED METRIC CARDS
+    col1, col2, col3 = st.columns(3)
+    with col1: st.metric("ICD-10", data.get("icd_10_code", "N/A"))
+    with col2: st.metric("Requested Therapy", data.get("requested_drug", "N/A"))
+    with col3: st.metric("Missing Labs/Data", "Yes" if data.get("missing_info", "None").lower() not in ["none", "n/a", "complete"] else "No")
     
-    st.write("") # Tiny spacer
+    st.write("")
+    st.write("")
     
-    # ACTION ITEM (If Pending)
+    # ELEGANT ACTION ALERTS
     if decision == "PENDING_INFO":
-        st.info(f"**📠 Auto-Drafted Fax to Provider:** {data.get('message_to_provider', 'N/A')}", icon="✉️")
+        st.info(f"**Drafted Provider Communication:** {data.get('message_to_provider', 'N/A')}", icon="📨")
     elif decision == "DENIED":
-        st.error(f"**🚫 Denial Note:** Patient explicitly failed criteria. No further info requested.", icon="🚫")
+        st.error(f"**Coverage Note:** Patient does not meet formulary requirements.", icon="🛑")
     else:
-        st.success(f"**✅ Approval Note:** All formulary criteria met. Ready for claim processing.", icon="✅")
+        st.success(f"**Coverage Note:** All prerequisites verified. Ready for switch transmission.", icon="✅")
         
-    # DEVELOPER ACCORDION (Kept small and out of the way)
-    with st.expander("Show Raw Developer Payload (JSON)"):
+    st.write("")
+    with st.expander("Show Developer Payload"):
         st.json(data)
         
 else:
+    # APPLE EMPTY STATE
     st.markdown("""
-        <div style="padding: 40px; text-align: center; border: 2px dashed #cbd5e1; border-radius: 8px; color: #64748b;">
-            <p style="margin:0; font-size: 1.1rem;">Upload Patient and Policy PDFs in the sidebar to run adjudication.</p>
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 60vh; text-align: center;">
+            <h1 style="font-size: 56px; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 10px;">Pro intelligence. <br> Zero friction.</h1>
+            <p style="font-size: 21px; color: #86868B; max-width: 500px; line-height: 1.4;">
+                Upload a patient record and policy document to instantly adjudicate clinical data.
+            </p>
         </div>
     """, unsafe_allow_html=True)
