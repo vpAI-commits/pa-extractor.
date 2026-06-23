@@ -170,7 +170,7 @@ if patient_file and policy_file:
                 """
                 
                 response = client.models.generate_content(
-                    model='gemini-2.5-flashlite',
+                    model='gemini-2.5-flash-lite',
                     contents=[patient_part, policy_part, prompt]
                 )
                 
