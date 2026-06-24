@@ -3,12 +3,21 @@ from google import genai
 from google.genai import types
 import json
 import time
+import re
 
 # --- 1. WORKSPACE UI CONFIGURATION ---
 st.set_page_config(page_title="PA Agent Console", page_icon="🧬", layout="centered")
 
 if "extracted_data" not in st.session_state:
     st.session_state.extracted_data = None
+
+if "system_logs" not in st.session_state:
+    st.session_state.system_logs = []
+
+def add_log(message, level="info"):
+    """Helper to append system logs to the session state"""
+    timestamp = time.strftime("%H:%M:%S")
+    st.session_state.system_logs.append({"time": timestamp, "msg": message, "level": level})
 
 # Custom CSS for the Immersive Agentic Workspace
 st.markdown("""
@@ -132,15 +141,25 @@ st.write("")
 if patient_file and policy_file:
     if st.button("Initialize Reasoning Agent"):
         
+        st.session_state.system_logs = [] # Clear previous logs
+        add_log("System initialized. Review cycle starting.", "info")
+        
         # The new immersive "Agent Working" UX
         with st.status("Initializing clinical review protocol...", expanded=True) as status:
             try:
                 st.write("📥 Loading documents into memory cache...")
+                add_log("Reading PDF bytes into memory...", "info")
                 patient_bytes = patient_file.read()
                 policy_bytes = policy_file.read()
-                time.sleep(0.5) # Slight delay for UX effect
+                
+                # Input Validation
+                if not patient_bytes or not policy_bytes:
+                    raise ValueError("Empty file detected. Please re-upload valid PDF documents.")
+                    
+                time.sleep(0.5) 
                 
                 st.write("🔐 Authenticating with Gemini API...")
+                add_log("Authenticating Google API credentials...", "info")
                 client = genai.Client(api_key=st.secrets["GEMINI_API_KEY"])
                 
                 patient_part = types.Part.from_bytes(data=patient_bytes, mime_type='application/pdf')
@@ -169,66 +188,57 @@ if patient_file and policy_file:
                 }
                 """
                 
-                response = client.models.generate_content(
-                    model='gemini-2.5-flash-lite',
-                    contents=[patient_part, policy_part, prompt]
-                )
+                # --- ADVANCED ERROR HANDLING & EXPONENTIAL BACKOFF ---
+                max_retries = 3
+                response_text = None
                 
+                for attempt in range(max_retries):
+                    try:
+                        add_log(f"Attempt {attempt + 1}: Transmitting multi-modal payload...", "info")
+                        response = client.models.generate_content(
+                            model='gemini-2.5-flash',
+                            contents=[patient_part, policy_part, prompt]
+                        )
+                        response_text = response.text
+                        add_log("200 OK: Content generated successfully.", "success")
+                        break # Success! Break the retry loop
+                        
+                    except Exception as api_err:
+                        err_str = str(api_err).lower()
+                        
+                        # 1. Handle Rate Limits / Quotas (429)
+                        if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
+                            st.write(f"⚠️ **Google API Speed Limit (429).** Automatically pausing and retrying... (Attempt {attempt + 1}/{max_retries})")
+                            add_log(f"429 Resource Exhausted. Retrying in {2 ** (attempt + 1)}s...", "warning")
+                            
+                            if attempt < max_retries - 1:
+                                time.sleep(2 ** (attempt + 1)) # Waits 2s, 4s, etc.
+                                continue
+                            else:
+                                raise RuntimeError("API Quota Reached. Please wait 60 seconds before initiating another review cycle.")
+                        
+                        # 2. Handle Bad Payloads (400)
+                        elif "400" in err_str or "invalid_argument" in err_str:
+                            add_log(f"400 Bad Request: {api_err}", "error")
+                            raise ValueError("Invalid PDF payload. The document might be corrupted, password-protected, or too massive for the AI's context window.")
+                            
+                        # 3. Handle Other/Server Errors (500/503)
+                        else:
+                            add_log(f"API Error: {api_err}", "error")
+                            if attempt < max_retries - 1:
+                                time.sleep(2)
+                                continue
+                            else:
+                                raise RuntimeError(f"Google Gemini Servers failed to respond after {max_retries} attempts.")
+
+                # Ensure we got a response
+                if not response_text:
+                    raise RuntimeError("Failed to generate content. The response was empty.")
+
                 st.write("📝 Formatting final clinical determination...")
-                st.session_state.extracted_data = json.loads(response.text)
+                add_log("Applying Regex JSON extraction layer...", "info")
                 
-                status.update(label="Adjudication complete.", state="complete", expanded=False)
-                
-            except Exception as e:
-                status.update(label="Execution failed.", state="error", expanded=True)
-                st.error(f"System Error: {e}")
-
-# --- 5. THE FORMAL REPORT UI ---
-if st.session_state.extracted_data:
-    data = st.session_state.extracted_data
-    decision = data.get("decision", "UNKNOWN")
-    
-    status_class = "status-approved" if decision == "APPROVED" else "status-denied" if decision == "DENIED" else "status-pending"
-    display_decision = decision.replace("_", " ")
-
-    st.markdown(f"""
-        <div class="report-card">
-            <div class="report-header">
-                <h2 style="margin: 0;">Clinical Determination Report</h2>
-                <div class="status-badge {status_class}">{display_decision}</div>
-            </div>
-            
-            <div class="data-row">
-                <div class="data-label">Requested Rx</div>
-                <div class="data-value">{data.get('requested_drug', 'N/A')}</div>
-            </div>
-            <div class="data-row">
-                <div class="data-label">Diagnosis</div>
-                <div class="data-value">{data.get('primary_diagnosis', 'N/A')} (ICD-10: {data.get('icd_10_code', 'N/A')})</div>
-            </div>
-            <div class="data-row">
-                <div class="data-label">Patient Status</div>
-                <div class="data-value">{data.get('patient_status', 'N/A')}</div>
-            </div>
-            <div class="data-row">
-                <div class="data-label">Missing Data</div>
-                <div class="data-value">{data.get('missing_info', 'None')}</div>
-            </div>
-            
-            <div class="rationale-box">
-                <div class="data-label" style="margin-bottom: 8px;">Adjudicator Rationale</div>
-                <div style="color: #e4e4e7; font-size: 16px; line-height: 1.5;">{data.get('reasoning', '')}</div>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
-
-    st.write("")
-    
-    # Handle the Provider Message if Pending
-    if decision == "PENDING_INFO":
-        st.markdown("#### ✉️ Drafted Provider Outreach")
-        st.info(data.get('message_to_provider', 'N/A'))
-        
-    st.write("")
-    with st.expander("View Raw System Output"):
-        st.json(data)
+                # --- ROBUST JSON EXTRACTION ---
+                try:
+                    # Strips out markdown syntax in case the AI hallucinates code blocks
+                    clean_text = re.sub(r'
