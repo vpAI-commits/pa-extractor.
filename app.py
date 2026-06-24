@@ -4,15 +4,22 @@ from google.genai import types
 import json
 import time
 import re
+import base64
 
 # --- 1. WORKSPACE UI CONFIGURATION ---
 st.set_page_config(page_title="PA Agent Console", page_icon="🧬", layout="centered")
 
+# Initialize Session States
 if "extracted_data" not in st.session_state:
     st.session_state.extracted_data = None
-
 if "system_logs" not in st.session_state:
     st.session_state.system_logs = []
+if "patient_b64" not in st.session_state:
+    st.session_state.patient_b64 = None
+if "policy_b64" not in st.session_state:
+    st.session_state.policy_b64 = None
+if "show_previews" not in st.session_state:
+    st.session_state.show_previews = False
 
 def add_log(message, level="info"):
     """Helper to append system logs to the session state"""
@@ -62,6 +69,17 @@ st.markdown("""
         transform: translateY(-2px);
         background-color: #e4e4e7;
         color: #09090b;
+    }
+
+    /* Secondary Action Button (Toggle) */
+    .toggle-btn > button {
+        background-color: #18181b !important;
+        color: #a1a1aa !important;
+        border: 1px solid #27272a !important;
+    }
+    .toggle-btn > button:hover {
+        border: 1px solid #6366f1 !important;
+        color: #e4e4e7 !important;
     }
 
     /* The Report Document Style */
@@ -118,14 +136,47 @@ st.markdown("""
         border-radius: 0 8px 8px 0;
     }
     
-    /* Process Trace Styling */
-    .trace-step {
-        background-color: rgba(99, 102, 241, 0.05);
-        border-left: 2px solid #6366f1;
-        padding: 10px 15px;
-        margin-bottom: 10px;
-        font-size: 14.5px;
-        color: #e4e4e7;
+    /* Process Trace Visual Map Styling */
+    .visual-map-container {
+        display: flex;
+        flex-direction: column;
+        gap: 0;
+        margin: 30px 0;
+    }
+    .map-node {
+        display: flex;
+        background-color: #18181b;
+        border: 1px solid #27272a;
+        border-radius: 12px;
+        padding: 20px;
+        z-index: 2;
+        position: relative;
+        box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+    }
+    .map-icon {
+        background-color: rgba(99, 102, 241, 0.1);
+        color: #818cf8;
+        border-radius: 50%;
+        width: 45px;
+        height: 45px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        font-size: 20px;
+        margin-right: 20px;
+        flex-shrink: 0;
+        border: 1px solid rgba(99, 102, 241, 0.2);
+    }
+    .map-content { flex: 1; }
+    .map-title { font-weight: 700; color: #e4e4e7; margin-bottom: 6px; font-size: 16px; text-transform: uppercase; letter-spacing: 0.5px;}
+    .map-desc { color: #a1a1aa; font-size: 14.5px; line-height: 1.5; }
+    .map-arrow {
+        text-align: center;
+        color: #6366f1;
+        font-size: 24px;
+        margin: -5px 0;
+        z-index: 1;
+        opacity: 0.7;
     }
     </style>
 """, unsafe_allow_html=True)
@@ -152,6 +203,7 @@ if patient_file and policy_file:
     if st.button("Initialize Reasoning Agent"):
         
         st.session_state.system_logs = [] # Clear previous logs
+        st.session_state.show_previews = False # Reset preview toggle
         add_log("System initialized. Review cycle starting.", "info")
         
         # The immersive "Agent Working" UX
@@ -165,6 +217,10 @@ if patient_file and policy_file:
                 # Input Validation
                 if not patient_bytes or not policy_bytes:
                     raise ValueError("Empty file detected. Please re-upload valid PDF documents.")
+                
+                # Encode PDFs for later rendering in the UI
+                st.session_state.patient_b64 = base64.b64encode(patient_bytes).decode('utf-8')
+                st.session_state.policy_b64 = base64.b64encode(policy_bytes).decode('utf-8')
                     
                 time.sleep(0.5) 
                 
@@ -177,7 +233,7 @@ if patient_file and policy_file:
                 
                 st.write("🧠 Cross-referencing patient history against formulary criteria...")
                 
-                # UPGRADED PROMPT: Now forces the AI to document its step-by-step logic
+                # UPGRADED PROMPT: Added summary extraction and visual map steps
                 prompt = """
                 You are a strict PBM Clinical Pharmacist Adjudicator.
                 Evaluate the provided Patient Medical Record against the PBM Formulary Policy.
@@ -187,17 +243,19 @@ if patient_file and policy_file:
                 2. If patient explicitly fails a criterion -> "DENIED".
                 3. If policy requires information missing from Patient PDF -> "PENDING_INFO".
                 
-                Output strictly as JSON:
+                Output strictly as JSON matching this schema:
                 {
+                  "patient_summary": "1-2 sentences summarizing the patient's condition and history.",
+                  "policy_summary": "1-2 sentences summarizing the core rules for the requested drug.",
                   "patient_status": "Brief status",
                   "primary_diagnosis": "Full condition name",
                   "icd_10_code": "Billing code",
                   "requested_drug": "Medication requested",
                   "missing_info": "List missing data or 'None'",
                   "step_by_step_analysis": [
-                    "Step 1 (Extraction): Detail exactly what clinical data was found in the patient record.",
-                    "Step 2 (Policy Lookup): Detail the exact policy rules found for the requested drug.",
-                    "Step 3 (Adjudication Mapping): Explain exactly how the clinical data maps to the rules to reach the final decision."
+                    "Detail exactly what clinical data was found in the patient record.",
+                    "Detail the exact policy rules found for the requested drug.",
+                    "Explain exactly how the clinical data maps to the rules to reach the final decision."
                   ],
                   "decision": "APPROVED", "DENIED", or "PENDING_INFO",
                   "reasoning": "1-2 short sentences summarizing the decision.",
@@ -222,25 +280,18 @@ if patient_file and policy_file:
                         
                     except Exception as api_err:
                         err_str = str(api_err).lower()
-                        
-                        # 1. Handle Rate Limits / Quotas (429)
                         if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
-                            wait_time = 5 * (attempt + 1) # Waits 5s, then 10s to clear Google limits
+                            wait_time = 5 * (attempt + 1)
                             st.write(f"⚠️ **Google API Speed Limit.** Pausing for {wait_time}s to cool down... (Attempt {attempt + 1}/{max_retries})")
                             add_log(f"429 Resource Exhausted. Retrying in {wait_time}s...", "warning")
-                            
                             if attempt < max_retries - 1:
                                 time.sleep(wait_time)
                                 continue
                             else:
                                 raise RuntimeError("API Quota Reached. Please wait 60 seconds before initiating another review cycle.")
-                        
-                        # 2. Handle Bad Payloads (400)
                         elif "400" in err_str or "invalid_argument" in err_str:
                             add_log(f"400 Bad Request: {api_err}", "error")
-                            raise ValueError("Invalid PDF payload. The document might be corrupted, password-protected, or too massive for the AI's context window.")
-                            
-                        # 3. Handle Other/Server Errors (500/503)
+                            raise ValueError("Invalid PDF payload. The document might be corrupted or too massive.")
                         else:
                             add_log(f"API Error: {api_err}", "error")
                             if attempt < max_retries - 1:
@@ -249,7 +300,6 @@ if patient_file and policy_file:
                             else:
                                 raise RuntimeError(f"Google Gemini Servers failed to respond after {max_retries} attempts.")
 
-                # Ensure we got a response
                 if not response_text:
                     raise RuntimeError("Failed to generate content. The response was empty.")
 
@@ -290,7 +340,7 @@ if st.session_state.extracted_data:
     status_class = "status-approved" if decision == "APPROVED" else "status-denied" if decision == "DENIED" else "status-pending"
     display_decision = decision.replace("_", " ")
 
-    # FIX: Flattened HTML string to prevent Streamlit's Markdown parser from turning it into a code block
+    # Formal Report Card HTML
     report_html = f"""<div class="report-card">
 <div class="report-header">
 <h2 style="margin: 0;">Clinical Determination Report</h2>
@@ -320,14 +370,57 @@ if st.session_state.extracted_data:
 
     st.markdown(report_html, unsafe_allow_html=True)
 
+    # DYNAMIC BUTTON FOR DOCUMENT PREVIEWS
     st.write("")
+    st.markdown('<div class="toggle-btn">', unsafe_allow_html=True)
+    if st.button("👁️ Toggle Document Previews & AI Summaries", use_container_width=True):
+        st.session_state.show_previews = not st.session_state.show_previews
+    st.markdown('</div>', unsafe_allow_html=True)
     
-    # Render the new Step-by-Step Adjudication Trace
+    # RENDER TABS IF TOGGLED
+    if st.session_state.show_previews and st.session_state.patient_b64 and st.session_state.policy_b64:
+        st.markdown("### 📄 Source Documents")
+        tab1, tab2 = st.tabs(["Patient Chart", "PBM Policy"])
+        with tab1:
+            st.info(f"**AI Extraction Summary:** {data.get('patient_summary', 'Summary not generated.')}")
+            st.markdown(f'<iframe src="data:application/pdf;base64,{st.session_state.patient_b64}" width="100%" height="600px" style="border-radius: 8px; border: 1px solid #27272a;"></iframe>', unsafe_allow_html=True)
+        with tab2:
+            st.info(f"**AI Policy Summary:** {data.get('policy_summary', 'Summary not generated.')}")
+            st.markdown(f'<iframe src="data:application/pdf;base64,{st.session_state.policy_b64}" width="100%" height="600px" style="border-radius: 8px; border: 1px solid #27272a;"></iframe>', unsafe_allow_html=True)
+
+    st.write("---")
+
+    # VISUAL DECISION MAP
     analysis_steps = data.get('step_by_step_analysis', [])
-    if analysis_steps:
-        with st.expander("🔍 Adjudication Process Trace", expanded=True):
-            for step in analysis_steps:
-                st.markdown(f'<div class="trace-step">{step}</div>', unsafe_allow_html=True)
+    if len(analysis_steps) == 3:
+        st.markdown("### 🗺️ Decision Processing Map")
+        st.markdown(f"""
+        <div class="visual-map-container">
+            <div class="map-node">
+                <div class="map-icon">📄</div>
+                <div class="map-content">
+                    <div class="map-title">Step 1: Clinical Extraction</div>
+                    <div class="map-desc">{analysis_steps[0]}</div>
+                </div>
+            </div>
+            <div class="map-arrow">↓</div>
+            <div class="map-node">
+                <div class="map-icon">🏛️</div>
+                <div class="map-content">
+                    <div class="map-title">Step 2: Policy Rules Retrieval</div>
+                    <div class="map-desc">{analysis_steps[1]}</div>
+                </div>
+            </div>
+            <div class="map-arrow">↓</div>
+            <div class="map-node">
+                <div class="map-icon">⚖️</div>
+                <div class="map-content">
+                    <div class="map-title">Step 3: Logic Adjudication</div>
+                    <div class="map-desc">{analysis_steps[2]}</div>
+                </div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
                 
     st.write("")
     
@@ -337,7 +430,7 @@ if st.session_state.extracted_data:
         st.info(data.get('message_to_provider', 'N/A'))
         
     st.write("")
-    with st.expander("View Raw System Output (JSON)"):
+    with st.expander("⚙️ View Raw System Output (JSON)"):
         st.json(data)
 
 # --- 6. DIAGNOSTIC LOGS UI ---
