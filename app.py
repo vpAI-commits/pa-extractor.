@@ -3,7 +3,6 @@ from google import genai
 from google.genai import types
 import json
 import time
-import re
 
 # --- 1. WORKSPACE UI CONFIGURATION ---
 st.set_page_config(page_title="PA Agent Console", page_icon="🧬", layout="centered")
@@ -125,7 +124,7 @@ st.markdown('<h1>Autonomous Adjudicator</h1>', unsafe_allow_html=True)
 st.markdown('<p style="color: #a1a1aa; font-size: 16px;">Secure clinical reasoning engine. Upload requisite documentation to initiate the review cycle.</p>', unsafe_allow_html=True)
 st.write("")
 
-# --- 3. THE UPLOAD GRID (No Sidebar) ---
+# --- 3. THE UPLOAD GRID ---
 col1, col2 = st.columns(2, gap="large")
 with col1:
     st.markdown("#### 1. Patient Chart")
@@ -144,7 +143,7 @@ if patient_file and policy_file:
         st.session_state.system_logs = [] # Clear previous logs
         add_log("System initialized. Review cycle starting.", "info")
         
-        # The new immersive "Agent Working" UX
+        # The immersive "Agent Working" UX
         with st.status("Initializing clinical review protocol...", expanded=True) as status:
             try:
                 st.write("📥 Loading documents into memory cache...")
@@ -236,9 +235,91 @@ if patient_file and policy_file:
                     raise RuntimeError("Failed to generate content. The response was empty.")
 
                 st.write("📝 Formatting final clinical determination...")
-                add_log("Applying Regex JSON extraction layer...", "info")
+                add_log("Applying JSON extraction layer...", "info")
                 
                 # --- ROBUST JSON EXTRACTION ---
                 try:
-                    # Strips out markdown syntax in case the AI hallucinates code blocks
-                    clean_text = re.sub(r'
+                    # Clean the markdown formatting safely without using regex that breaks the editor
+                    clean_text = response_text.strip()
+                    if clean_text.startswith("```json"):
+                        clean_text = clean_text[7:]
+                    elif clean_text.startswith("```"):
+                        clean_text = clean_text[3:]
+                    if clean_text.endswith("```"):
+                        clean_text = clean_text[:-3]
+                    clean_text = clean_text.strip()
+                    
+                    st.session_state.extracted_data = json.loads(clean_text)
+                    add_log("JSON parsed and validated.", "success")
+                    
+                except json.JSONDecodeError as json_err:
+                    add_log(f"JSON Parse Failure: {json_err}", "error")
+                    add_log(f"Raw Output: {response_text}", "warning")
+                    raise ValueError("The AI model returned improperly formatted JSON data. Please try again.")
+                
+                status.update(label="Adjudication complete.", state="complete", expanded=False)
+                
+            except Exception as e:
+                status.update(label="Execution aborted.", state="error", expanded=True)
+                add_log(f"Critical System Error: {str(e)}", "error")
+                st.error(f"System Error: {e}")
+
+# --- 5. THE FORMAL REPORT UI ---
+if st.session_state.extracted_data:
+    data = st.session_state.extracted_data
+    decision = data.get("decision", "UNKNOWN")
+    
+    status_class = "status-approved" if decision == "APPROVED" else "status-denied" if decision == "DENIED" else "status-pending"
+    display_decision = decision.replace("_", " ")
+
+    st.markdown(f"""
+        <div class="report-card">
+            <div class="report-header">
+                <h2 style="margin: 0;">Clinical Determination Report</h2>
+                <div class="status-badge {status_class}">{display_decision}</div>
+            </div>
+            
+            <div class="data-row">
+                <div class="data-label">Requested Rx</div>
+                <div class="data-value">{data.get('requested_drug', 'N/A')}</div>
+            </div>
+            <div class="data-row">
+                <div class="data-label">Diagnosis</div>
+                <div class="data-value">{data.get('primary_diagnosis', 'N/A')} (ICD-10: {data.get('icd_10_code', 'N/A')})</div>
+            </div>
+            <div class="data-row">
+                <div class="data-label">Patient Status</div>
+                <div class="data-value">{data.get('patient_status', 'N/A')}</div>
+            </div>
+            <div class="data-row">
+                <div class="data-label">Missing Data</div>
+                <div class="data-value">{data.get('missing_info', 'None')}</div>
+            </div>
+            
+            <div class="rationale-box">
+                <div class="data-label" style="margin-bottom: 8px;">Adjudicator Rationale</div>
+                <div style="color: #e4e4e7; font-size: 16px; line-height: 1.5;">{data.get('reasoning', '')}</div>
+            </div>
+        </div>
+    """, unsafe_allow_html=True)
+
+    st.write("")
+    
+    # Handle the Provider Message if Pending
+    if decision == "PENDING_INFO":
+        st.markdown("#### ✉️ Drafted Provider Outreach")
+        st.info(data.get('message_to_provider', 'N/A'))
+        
+    st.write("")
+    with st.expander("View Raw System Output"):
+        st.json(data)
+
+# --- 6. DIAGNOSTIC LOGS UI ---
+st.write("---")
+with st.expander("📟 System Diagnostics & Logs"):
+    if st.session_state.get("system_logs"):
+        for log in st.session_state.system_logs:
+            color = "#4ade80" if log['level'] == "success" else "#f87171" if log['level'] == "error" else "#fbbf24" if log['level'] == "warning" else "#a1a1aa"
+            st.markdown(f"<div style='color:{color}; font-family:monospace; font-size:13px; margin-bottom:4px;'>[{log['time']}] [{log['level'].upper()}] {log['msg']}</div>", unsafe_allow_html=True)
+    else:
+        st.markdown("<span style='color:#a1a1aa; font-family:monospace; font-size:13px;'>No logs recorded in this session.</span>", unsafe_allow_html=True)
