@@ -3,6 +3,7 @@ from google import genai
 from google.genai import types
 import json
 import time
+import re
 
 # --- 1. WORKSPACE UI CONFIGURATION ---
 st.set_page_config(page_title="PA Agent Console", page_icon="🧬", layout="centered")
@@ -116,6 +117,16 @@ st.markdown("""
         margin-top: 30px;
         border-radius: 0 8px 8px 0;
     }
+    
+    /* Process Trace Styling */
+    .trace-step {
+        background-color: rgba(99, 102, 241, 0.05);
+        border-left: 2px solid #6366f1;
+        padding: 10px 15px;
+        margin-bottom: 10px;
+        font-size: 14.5px;
+        color: #e4e4e7;
+    }
     </style>
 """, unsafe_allow_html=True)
 
@@ -165,6 +176,8 @@ if patient_file and policy_file:
                 policy_part = types.Part.from_bytes(data=policy_bytes, mime_type='application/pdf')
                 
                 st.write("🧠 Cross-referencing patient history against formulary criteria...")
+                
+                # UPGRADED PROMPT: Now forces the AI to document its step-by-step logic
                 prompt = """
                 You are a strict PBM Clinical Pharmacist Adjudicator.
                 Evaluate the provided Patient Medical Record against the PBM Formulary Policy.
@@ -181,13 +194,18 @@ if patient_file and policy_file:
                   "icd_10_code": "Billing code",
                   "requested_drug": "Medication requested",
                   "missing_info": "List missing data or 'None'",
+                  "step_by_step_analysis": [
+                    "Step 1 (Extraction): Detail exactly what clinical data was found in the patient record.",
+                    "Step 2 (Policy Lookup): Detail the exact policy rules found for the requested drug.",
+                    "Step 3 (Adjudication Mapping): Explain exactly how the clinical data maps to the rules to reach the final decision."
+                  ],
                   "decision": "APPROVED", "DENIED", or "PENDING_INFO",
-                  "reasoning": "1-2 short sentences explaining why.",
+                  "reasoning": "1-2 short sentences summarizing the decision.",
                   "message_to_provider": "Draft request to doctor if PENDING_INFO, else 'N/A'"
                 }
                 """
                 
-                # --- ADVANCED ERROR HANDLING & EXPONENTIAL BACKOFF ---
+                # --- ADVANCED ERROR HANDLING & LONGER BACKOFF ---
                 max_retries = 3
                 response_text = None
                 
@@ -207,11 +225,12 @@ if patient_file and policy_file:
                         
                         # 1. Handle Rate Limits / Quotas (429)
                         if "429" in err_str or "resource_exhausted" in err_str or "quota" in err_str:
-                            st.write(f"⚠️ **Google API Speed Limit (429).** Automatically pausing and retrying... (Attempt {attempt + 1}/{max_retries})")
-                            add_log(f"429 Resource Exhausted. Retrying in {2 ** (attempt + 1)}s...", "warning")
+                            wait_time = 5 * (attempt + 1) # Waits 5s, then 10s to clear Google limits
+                            st.write(f"⚠️ **Google API Speed Limit.** Pausing for {wait_time}s to cool down... (Attempt {attempt + 1}/{max_retries})")
+                            add_log(f"429 Resource Exhausted. Retrying in {wait_time}s...", "warning")
                             
                             if attempt < max_retries - 1:
-                                time.sleep(2 ** (attempt + 1)) # Waits 2s, 4s, etc.
+                                time.sleep(wait_time)
                                 continue
                             else:
                                 raise RuntimeError("API Quota Reached. Please wait 60 seconds before initiating another review cycle.")
@@ -225,7 +244,7 @@ if patient_file and policy_file:
                         else:
                             add_log(f"API Error: {api_err}", "error")
                             if attempt < max_retries - 1:
-                                time.sleep(2)
+                                time.sleep(3)
                                 continue
                             else:
                                 raise RuntimeError(f"Google Gemini Servers failed to respond after {max_retries} attempts.")
@@ -239,7 +258,6 @@ if patient_file and policy_file:
                 
                 # --- ROBUST JSON EXTRACTION ---
                 try:
-                    # Clean the markdown formatting safely without using regex that breaks the editor
                     clean_text = response_text.strip()
                     if clean_text.startswith("```json"):
                         clean_text = clean_text[7:]
@@ -272,37 +290,45 @@ if st.session_state.extracted_data:
     status_class = "status-approved" if decision == "APPROVED" else "status-denied" if decision == "DENIED" else "status-pending"
     display_decision = decision.replace("_", " ")
 
-    st.markdown(f"""
-        <div class="report-card">
-            <div class="report-header">
-                <h2 style="margin: 0;">Clinical Determination Report</h2>
-                <div class="status-badge {status_class}">{display_decision}</div>
-            </div>
-            
-            <div class="data-row">
-                <div class="data-label">Requested Rx</div>
-                <div class="data-value">{data.get('requested_drug', 'N/A')}</div>
-            </div>
-            <div class="data-row">
-                <div class="data-label">Diagnosis</div>
-                <div class="data-value">{data.get('primary_diagnosis', 'N/A')} (ICD-10: {data.get('icd_10_code', 'N/A')})</div>
-            </div>
-            <div class="data-row">
-                <div class="data-label">Patient Status</div>
-                <div class="data-value">{data.get('patient_status', 'N/A')}</div>
-            </div>
-            <div class="data-row">
-                <div class="data-label">Missing Data</div>
-                <div class="data-value">{data.get('missing_info', 'None')}</div>
-            </div>
-            
-            <div class="rationale-box">
-                <div class="data-label" style="margin-bottom: 8px;">Adjudicator Rationale</div>
-                <div style="color: #e4e4e7; font-size: 16px; line-height: 1.5;">{data.get('reasoning', '')}</div>
-            </div>
-        </div>
-    """, unsafe_allow_html=True)
+    # FIX: Flattened HTML string to prevent Streamlit's Markdown parser from turning it into a code block
+    report_html = f"""<div class="report-card">
+<div class="report-header">
+<h2 style="margin: 0;">Clinical Determination Report</h2>
+<div class="status-badge {status_class}">{display_decision}</div>
+</div>
+<div class="data-row">
+<div class="data-label">Requested Rx</div>
+<div class="data-value">{data.get('requested_drug', 'N/A')}</div>
+</div>
+<div class="data-row">
+<div class="data-label">Diagnosis</div>
+<div class="data-value">{data.get('primary_diagnosis', 'N/A')} (ICD-10: {data.get('icd_10_code', 'N/A')})</div>
+</div>
+<div class="data-row">
+<div class="data-label">Patient Status</div>
+<div class="data-value">{data.get('patient_status', 'N/A')}</div>
+</div>
+<div class="data-row">
+<div class="data-label">Missing Data</div>
+<div class="data-value">{data.get('missing_info', 'None')}</div>
+</div>
+<div class="rationale-box">
+<div class="data-label" style="margin-bottom: 8px;">Adjudicator Rationale</div>
+<div style="color: #e4e4e7; font-size: 16px; line-height: 1.5;">{data.get('reasoning', '')}</div>
+</div>
+</div>"""
 
+    st.markdown(report_html, unsafe_allow_html=True)
+
+    st.write("")
+    
+    # Render the new Step-by-Step Adjudication Trace
+    analysis_steps = data.get('step_by_step_analysis', [])
+    if analysis_steps:
+        with st.expander("🔍 Adjudication Process Trace", expanded=True):
+            for step in analysis_steps:
+                st.markdown(f'<div class="trace-step">{step}</div>', unsafe_allow_html=True)
+                
     st.write("")
     
     # Handle the Provider Message if Pending
@@ -311,7 +337,7 @@ if st.session_state.extracted_data:
         st.info(data.get('message_to_provider', 'N/A'))
         
     st.write("")
-    with st.expander("View Raw System Output"):
+    with st.expander("View Raw System Output (JSON)"):
         st.json(data)
 
 # --- 6. DIAGNOSTIC LOGS UI ---
